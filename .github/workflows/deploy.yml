@@ -1,0 +1,129 @@
+name: Production Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - production
+        - staging
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linting
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build application
+        run: npm run build
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Create backup
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
+            cd /home/tutorbuddy/htdocs/tutorbuddy.co/Tutorbuddy
+            echo "Creating backup of current deployment..."
+            if [ -d ".git" ]; then
+              git rev-parse HEAD > .backup_commit
+              echo "Backup created: $(cat .backup_commit)"
+            fi
+          EOF
+
+      - name: Deploy to server
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
+            set -e  # Exit on any error
+            
+            cd /home/tutorbuddy/htdocs/tutorbuddy.co/Tutorbuddy
+            echo "Starting deployment process..."
+            
+            echo "Pulling latest code..."
+            git fetch origin main
+            git reset --hard origin/main
+            
+            echo "Installing dependencies..."
+            npm ci
+            
+            echo "Running linting..."
+            npm run lint
+            
+            echo "Type checking..."
+            npx tsc --noEmit
+            
+            echo "Building application..."
+            npm run build
+            
+            echo "Restarting PM2 process..."
+            pm2 restart tutorbuddy
+            
+            echo "Checking if application is running..."
+            sleep 5
+            if pm2 status | grep -q "online"; then
+              echo "✅ Deployment completed successfully!"
+              pm2 status
+            else
+              echo "❌ Deployment failed - application not running"
+              exit 1
+            fi
+          EOF
+
+      - name: Health check
+        run: |
+          echo "Performing health check..."
+          sleep 10
+          # Add your health check endpoint here
+          # curl -f http://your-domain.com/api/health || exit 1
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "🎉 Deployment to production completed successfully!"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Deployed by: ${{ github.actor }}"
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed, attempting rollback..."
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
+            cd /home/tutorbuddy/htdocs/tutorbuddy.co/Tutorbuddy
+            if [ -f ".backup_commit" ]; then
+              echo "Rolling back to previous commit..."
+              git reset --hard $(cat .backup_commit)
+              npm ci
+              npm run build
+              pm2 restart tutorbuddy
+              echo "Rollback completed"
+            else
+              echo "No backup found, cannot rollback"
+            fi
+          EOF 
