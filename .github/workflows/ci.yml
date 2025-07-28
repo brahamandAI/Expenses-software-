@@ -38,3 +38,4 @@ jobs:
 
       - name: Deploy to server
         run: ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash /home/customerzone/htdocs/customerzone.in/Expenses-software/scripts/deploy.sh'
+        

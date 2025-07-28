@@ -62,7 +62,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
             set -e  # Exit on any error
             
-            cd /home/tutorbuddy/htdocs/tutorbuddy.co/Tutorbuddy
+            cd /home/customerzone/htdocs/customerzone.in/Expenses-software
             echo "Starting deployment process..."
             
             echo "Pulling latest code..."
